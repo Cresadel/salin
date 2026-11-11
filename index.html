@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Salin – Voice & Text Translator</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo" aria-hidden="true">S</div>
+    <div class="grow"><h1>Salin</h1><p>Speak or type, then translate between English, Filipino, and Bisaya.</p></div>
+    <button class="btn sm" id="fMinus" aria-label="Smaller text">A−</button>
+    <button class="btn sm" id="fPlus" aria-label="Larger text">A+</button>
+    <button class="btn sm" id="theme">Dark mode</button>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab on" data-tab="translate" role="tab" aria-selected="true">Translate</button>
+    <button class="tab" data-tab="saved" role="tab" aria-selected="false">Saved</button>
+  </nav>
+
+  <main class="panel">
+    <div class="langs">
+      <select id="from" aria-label="From"></select>
+      <button class="swap" id="swap" aria-label="Swap languages">⇄</button>
+      <select id="to" aria-label="To"></select>
+    </div>
+
+    <section id="t-translate">
+      <div class="cols">
+        <div class="box">
+          <h2>Your text</h2>
+          <textarea id="input" aria-label="Your text" placeholder="Type here, or press Record and speak"></textarea>
+          <div class="row">
+            <button class="mic" id="mic">Record</button>
+            <button class="btn" id="listenIn">Read aloud</button>
+            <button class="btn" id="fix">Save my correction</button>
+            <button class="btn danger push" id="clear">Clear</button>
+          </div>
+        </div>
+        <div class="box">
+          <h2>Translation (you can edit it)</h2>
+          <div class="output" id="output" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Translation" data-ph="The translation will appear here."></div>
+          <div class="row">
+            <button class="btn primary" id="translate">Translate</button>
+            <button class="btn" id="listenOut">Read aloud</button>
+            <button class="btn" id="copy">Copy</button>
+          </div>
+        </div>
+      </div>
+      <div class="opts">
+        <label><input type="checkbox" id="auto" checked> Auto translate while recording</label>
+        <span id="engineBox" class="hide">Engine
+          <select id="engine"><option value="mm">MyMemory (online, light)</option><option value="nllb">Offline AI (NLLB, ~900 MB first time)</option></select>
+        </span>
+        <span>Download as
+          <select id="fmt"><option value="txt">Text (.txt)</option><option value="doc">Word (.doc)</option><option value="pdf">PDF</option><option value="srt">Subtitles (.srt)</option></select>
+        </span>
+        <button class="btn" id="download">Download</button>
+        <button class="btn" id="dlAudio" disabled>Download audio</button>
+      </div>
+    </section>
+
+    <section id="t-saved" class="hide">
+      <div class="row">
+        <label><input type="checkbox" id="favOnly"> Favorites only</label>
+        <span class="grow"></span>
+        <button class="btn" id="dlAll">Download all</button>
+        <button class="btn" id="clearAll">Delete all</button>
+        <button class="btn" id="clearGloss">Clear my corrections</button>
+      </div>
+      <div id="list"></div>
+    </section>
+
+    <div class="status" id="status" role="status"></div>
+  </main>
+
+  <footer>Translations use the free MyMemory service, with a backup online service when MyMemory gives a bad result (internet needed). If both are offline, a small built-in phrasebook is used. Voice works best in Chrome or Edge. Your saved items stay in this browser.</footer>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
