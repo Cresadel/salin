@@ -2,10 +2,20 @@
 
   var $ = function (i) { return document.getElementById(i); };
 
+  var busy = false;
+
   var LANGS = {
     en:  { name: "English", api: "en", rec: "en-US", tts: "en-US" },
     fil: { name: "Filipino", api: "tl", rec: "fil-PH", tts: "fil-PH" },
-    ceb: { name: "Bisaya (Cebuano)", api: "ceb", rec: null, tts: "ceb-PH" }
+    ceb: { name: "Bisaya (Cebuano)", api: "ceb", rec: null, tts: "ceb-PH", asr: "sapinsapin" }
+  };
+
+  // Bisaya has no browser speech recognition, so it is sent to the public
+  // SapinSapin halohalo demo (Hugging Face Space) for transcription.
+  var CEB_ASR = {
+    host: "https://sapinsapin-halohalo-dashboard.hf.space",
+    lang: "Cebuano",
+    model: "fast baseline · whisper-small-pld-ceb · 242M · CER 2.6% in-domain"
   };
 
   var IDX = { en: 0, fil: 1, ceb: 2 };
@@ -292,14 +302,32 @@
 
   var fromSel = $("from"), toSel = $("to"), input = $("input"), output = $("output"), statusEl = $("status");
 
-  fromSel.add(new Option("Auto-detect", "auto"));
+  (function () {
+    var f = new Option("Select language", ""), t = new Option("Select language", "");
+    f.disabled = true;
+    t.disabled = true;
+    fromSel.add(f);
+    toSel.add(t);
+  })();
+
   Object.keys(LANGS).forEach(function (k) {
     fromSel.add(new Option(LANGS[k].name, k));
     toSel.add(new Option(LANGS[k].name, k));
   });
 
-  fromSel.value = "en";
-  toSel.value = "ceb";
+  fromSel.value = "";
+  toSel.value = "";
+
+  function langsReady() {
+    return !!(fromSel.value && toSel.value);
+  }
+
+  function syncControls() {
+    var ready = langsReady();
+    $("mic").disabled = !ready;
+    $("swap").disabled = !ready;
+    if (!busy) $("translate").disabled = !ready;
+  }
 
   function get(k, d) {
     try { return JSON.parse(localStorage.getItem(k)) || d; }
@@ -396,6 +424,7 @@
   }
 
   function srcLang(text) {
+    if (!fromSel.value) return "";
     return fromSel.value === "auto" ? detect(text) : fromSel.value;
   }
 
@@ -492,6 +521,22 @@
     put("salin-engine", engineSel.value);
   };
 
+  // "gabii"/"gabi" greetings are evening greetings, but online services often say "Good night"
+  function fixGreeting(src, out) {
+    var s = src.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/([aeiou])-([aeiou])/g, "$1$2");
+
+    if (/^\s*(maayong|magandang)\s+gabi+\b/.test(s)) {
+      return out.replace(/^good night\b/i, "Good evening");
+    }
+
+    return out;
+  }
+
+  // The Bisaya voice model returns accented letters (Maáyong gabí-i). Remove them.
+  function cleanCeb(t) {
+    return String(t).normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/([aeiouAEIOU])-([aeiouAEIOU])/g, "$1$2");
+  }
+
   async function tr(text, from, to) {
     if (from === to) return { t: text, how: "same" };
 
@@ -541,10 +586,11 @@
         pieces.push(out);
       }
 
-      return {
-        t: pieces.join(" ").replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, "&"),
-        how: note
-      };
+      var joined = pieces.join(" ").replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, "&");
+
+      if (to === "en" && from !== "en") joined = fixGreeting(text, joined);
+
+      return { t: joined, how: note };
 
     } catch (e) {
       var o = dictLookup(text, from, to);
@@ -636,6 +682,11 @@
   async function translateText(live) {
     live = live === true;
 
+    if (!langsReady()) {
+      if (!live) say("Select your language in From and To first.", "warn");
+      return;
+    }
+
     var text = input.value.trim();
 
     if (!text) {
@@ -646,6 +697,7 @@
     var from = srcLang(text), to = toSel.value, id = ++reqId, key = from + "|" + to + "|" + text.toLowerCase();
 
     if (!live) {
+      busy = true;
       $("translate").disabled = true;
       say("Translating…");
     }
@@ -671,7 +723,10 @@
         : "Could not translate. Check your internet connection. Short common phrases still work offline.", "err");
     }
 
-    if (id === reqId) $("translate").disabled = false;
+    if (id === reqId) {
+      busy = false;
+      syncControls();
+    }
   }
 
   $("translate").onclick = function () {
@@ -681,10 +736,38 @@
   input.onkeydown = function (e) {
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) translateText();
   };
-    // Changing the "To" language instantly shows the same text in that language
+
+  // Typing: translate automatically 0.8 s after you stop typing (when Auto translate is checked)
+
+  var typeTimer = null;
+
+  input.oninput = function () {
+    clearTimeout(typeTimer);
+    if (!$("auto").checked || !langsReady()) return;
+
+    typeTimer = setTimeout(function () {
+      if (input.value.trim()) translateText(true);
+    }, 800);
+  };
+
+  // When you leave the box, translate once more and save it to the Saved list
+  input.onchange = function () {
+    if ($("auto").checked && langsReady() && input.value.trim()) translateText();
+  };
+
+  // Changing the "To" language instantly shows the same text in that language
 
   toSel.onchange = function () {
-    if (input.value.trim()) translateText();
+    syncControls();
+    if (langsReady() && input.value.trim()) translateText();
+  };
+
+  fromSel.onchange = function () {
+    syncControls();
+
+    if (fromSel.value === "ceb") {
+      say("Bisaya voice is transcribed online, so recording needs internet.");
+    }
   };
 
   // While recording, translate every ~1.2 seconds so the translation follows your voice
@@ -740,7 +823,7 @@
 
   // ---------- Recording: speech to text + audio file ----------
 
-  var SR = window.SpeechRecognition || window.webkitSpeechRecognition, cur = null, mr = null, chunksA = [], recId = 0, stopCurrent = null;
+  var SR = window.SpeechRecognition || window.webkitSpeechRecognition, cur = null, mr = null, chunksA = [], recId = 0, stopCurrent = null, bisayaReqId = 0, bisayaAbort = null;
 
   function startAudio(tok) {
     if (!navigator.mediaDevices || !window.MediaRecorder) return;
@@ -788,7 +871,7 @@
 
     if (!loc) {
       loc = "fil-PH";
-      say("Browsers cannot recognize Bisaya yet, so Filipino is used. Expect mistakes and edit before translating.", "warn");
+      say("No browser recognizer for this language, so Filipino is used. Expect mistakes and edit before translating.", "warn");
     } else {
       say("Listening… speak now.");
     }
@@ -882,13 +965,351 @@
     }
   }
 
+  // ---------- Bisaya: online speech-to-text via the SapinSapin Space ----------
+
+  function sseComplete(url, signal) {
+    return fetch(url, { signal: signal }).then(function (r) {
+      if (!r.ok || !r.body) throw new Error("HTTP " + r.status);
+
+      var reader = r.body.getReader(), dec = new TextDecoder(), buf = "";
+
+      function parse(block) {
+        var ev = "", dat = "";
+
+        block.split("\n").forEach(function (line) {
+          if (line.indexOf("event:") === 0) ev = line.slice(6).trim();
+          else if (line.indexOf("data:") === 0) dat += line.slice(5).trim();
+        });
+
+        if (ev === "complete" && dat) return dat;
+        if (ev === "error") throw new Error(dat || "error");
+        return null;
+      }
+
+      function pump() {
+        return reader.read().then(function (res) {
+          if (res.done) {
+            var last = parse(buf);
+            if (last !== null) return JSON.parse(last);
+            throw new Error("No result from the Cebuano service.");
+          }
+
+          buf += dec.decode(res.value, { stream: true }).replace(/\r/g, "");
+
+          var cut;
+
+          while ((cut = buf.indexOf("\n\n")) > -1) {
+            var block = buf.slice(0, cut);
+            buf = buf.slice(cut + 2);
+
+            var got = parse(block);
+            if (got !== null) return JSON.parse(got);
+          }
+
+          return pump();
+        });
+      }
+
+      return pump();
+    });
+  }
+
+  async function transcribeCebuano(blob, signal, ext, quiet) {
+    var fd = new FormData();
+    fd.append("files", blob, "speech." + (ext || audioExt));
+
+    var up = await fetch(CEB_ASR.host + "/gradio_api/upload", { method: "POST", body: fd, signal: signal });
+    if (!up.ok) throw new Error("Upload failed (" + up.status + ").");
+
+    var paths = await up.json();
+    if (!paths || !paths.length) throw new Error("Upload failed.");
+
+    if (!quiet) say("Transcribing Bisaya… the first run can take a few minutes.");
+
+    var call = await fetch(CEB_ASR.host + "/gradio_api/call/v2/transcribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        lang_name: CEB_ASR.lang,
+        model_label: CEB_ASR.model,
+        audio: { path: paths[0], meta: { _type: "gradio.FileData" } },
+        reference: ""
+      }),
+      signal: signal
+    });
+
+    if (!call.ok) throw new Error("Transcribe failed (" + call.status + ").");
+
+    var started = await call.json();
+    if (!started || !started.event_id) throw new Error("No job was started.");
+
+    var out = await sseComplete(CEB_ASR.host + "/gradio_api/call/transcribe/" + started.event_id, signal);
+    var text = Array.isArray(out) ? out[0] : out;
+
+    return String(text || "").trim();
+  }
+
+  // ---------- Bisaya near-live mode ----------
+  // While you speak, the recording so far is sent to the service every few seconds,
+  // so the Bisaya text and its translation appear on screen before you press Stop.
+  // Audio is converted to 16 kHz mono WAV first (what the speech model expects).
+
+  function encodeWav(samples, rate) {
+    var buf = new ArrayBuffer(44 + samples.length * 2), v = new DataView(buf);
+
+    function w(o, s) {
+      for (var i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i));
+    }
+
+    w(0, "RIFF");
+    v.setUint32(4, 36 + samples.length * 2, true);
+    w(8, "WAVE");
+    w(12, "fmt ");
+    v.setUint32(16, 16, true);
+    v.setUint16(20, 1, true);
+    v.setUint16(22, 1, true);
+    v.setUint32(24, rate, true);
+    v.setUint32(28, rate * 2, true);
+    v.setUint16(32, 2, true);
+    v.setUint16(34, 16, true);
+    w(36, "data");
+    v.setUint32(40, samples.length * 2, true);
+
+    for (var i = 0; i < samples.length; i++) {
+      var s = Math.max(-1, Math.min(1, samples[i]));
+      v.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+    }
+
+    return new Blob([v], { type: "audio/wav" });
+  }
+
+  function toWav16k(blob) {
+    var AC = window.AudioContext || window.webkitAudioContext;
+
+    if (!AC || !window.OfflineAudioContext) {
+      return Promise.resolve({ blob: blob, ext: audioExt });
+    }
+
+    return blob.arrayBuffer().then(function (buf) {
+      var ctx = new AC();
+
+      return ctx.decodeAudioData(buf).then(function (audio) {
+        try { ctx.close(); } catch (e) {}
+
+        var off = new OfflineAudioContext(1, Math.max(1, Math.ceil(audio.duration * 16000)), 16000);
+        var src = off.createBufferSource();
+
+        src.buffer = audio;
+        src.connect(off.destination);
+        src.start();
+
+        return off.startRendering();
+      });
+    }).then(function (rendered) {
+      return { blob: encodeWav(rendered.getChannelData(0), 16000), ext: "wav" };
+    }).catch(function () {
+      // If the browser cannot decode it, send the original recording
+      return { blob: blob, ext: audioExt };
+    });
+  }
+
+  // If what was heard is very close to a phrase in the phrasebook, use the phrasebook spelling
+
+  function lev(a, b) {
+    var m = a.length, n = b.length, d = [], i, j;
+
+    for (j = 0; j <= n; j++) d[j] = j;
+
+    for (i = 1; i <= m; i++) {
+      var prev = d[0];
+      d[0] = i;
+
+      for (j = 1; j <= n; j++) {
+        var tmp = d[j];
+        d[j] = Math.min(d[j] + 1, d[j - 1] + 1, prev + (a.charAt(i - 1) === b.charAt(j - 1) ? 0 : 1));
+        prev = tmp;
+      }
+    }
+
+    return d[n];
+  }
+
+  function snapBisaya(text) {
+    var norm = function (s) {
+      return s.toLowerCase().replace(/[’']/g, "").replace(/[.!?,;:]+/g, "").replace(/\s+/g, " ").trim();
+    };
+
+    var n = norm(text), best = null, top = 0.3;
+
+    if (n.length < 4) return text;
+
+    for (var i = 0; i < DICT.length; i++) {
+      var c = norm(DICT[i][2]), r = lev(n, c) / Math.max(n.length, c.length);
+
+      if (r < top) {
+        top = r;
+        best = DICT[i][2];
+      }
+    }
+
+    return best || text;
+  }
+
+  function handleCebuanoMic() {
+    if (cur) {
+      if (stopCurrent) stopCurrent();
+      return;
+    }
+
+    if (!navigator.mediaDevices || !window.MediaRecorder) {
+      say("This browser cannot record audio. Use Chrome or Edge, or type your text.", "err");
+      return;
+    }
+
+    if (bisayaAbort) {
+      try { bisayaAbort.abort(); } catch (e) {}
+      bisayaAbort = null;
+    }
+
+    var btn = $("mic"), base = input.value.trim() ? input.value.trim() + " " : "";
+
+    navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+    }).then(function (stream) {
+      var id = ++bisayaReqId, rec = new MediaRecorder(stream), parts = [],
+          sending = null, sentCount = 0, stopped = false, ticker = null, failed = false, lastText = "";
+
+      mr = rec;
+      audioBlob = null;
+
+      rec.ondataavailable = function (e) {
+        if (e.data && e.data.size) parts.push(e.data);
+      };
+
+      function alive() {
+        return id === bisayaReqId;
+      }
+
+      // Sends everything recorded so far. Resolves to the text, or null (nothing new, or it failed).
+      function sendNow(quiet) {
+        if (sending || !parts.length || parts.length === sentCount) return Promise.resolve(null);
+
+        var n = parts.length, ctrl = new AbortController(), timer = setTimeout(function () { ctrl.abort(); }, 180000);
+
+        bisayaAbort = ctrl;
+
+        sending = toWav16k(new Blob(parts.slice(0, n), { type: rec.mimeType || "audio/webm" })).then(function (w) {
+          return transcribeCebuano(w.blob, ctrl.signal, w.ext, quiet);
+        }).then(function (text) {
+          clearTimeout(timer);
+          sending = null;
+          sentCount = n;
+
+          if (!alive()) return null;
+
+          if (text) {
+            lastText = cleanCeb(text);
+            input.value = base + snapBisaya(lastText);
+          }
+
+          return text;
+        }).catch(function (e) {
+          clearTimeout(timer);
+          sending = null;
+          failed = true;
+
+          if (!alive()) return null;
+
+          say(e && e.name === "AbortError"
+            ? "The Cebuano voice service took too long. Try again, or type the text."
+            : "Could not reach the Cebuano voice service. Check your internet, type the text, or switch From to Filipino.", "err");
+
+          return null;
+        });
+
+        return sending;
+      }
+
+      // Live: every 1.5 seconds, if the last request is done and there is new audio, send it
+      ticker = setInterval(function () {
+        if (!alive() || stopped || failed || parts.length < 2) return;
+
+        sendNow(true).then(function (text) {
+          if (text && alive() && !stopped && $("auto").checked) translateText(true);
+        });
+      }, 1000);
+
+      stopCurrent = function () {
+        stopped = true;
+        clearInterval(ticker);
+        btn.classList.remove("on");
+        btn.textContent = "Record";
+
+        if (rec.state !== "inactive") rec.stop();
+      };
+
+      rec.onstop = function () {
+        stream.getTracks().forEach(function (t) { t.stop(); });
+
+        audioBlob = new Blob(parts, { type: rec.mimeType || "audio/webm" });
+        audioExt = /ogg/.test(rec.mimeType) ? "ogg" : /mp4/.test(rec.mimeType) ? "m4a" : "webm";
+        $("dlAudio").disabled = false;
+
+        if (mr === rec) mr = null;
+        cur = null;
+        stopCurrent = null;
+
+        btn.classList.remove("on");
+        btn.textContent = "Record";
+
+        if (!alive()) return;
+
+        say("Finishing the Bisaya transcription…");
+        failed = false;
+
+        (sending || Promise.resolve()).then(function () {
+          return sendNow(false);
+        }).then(function () {
+          if (!alive()) return;
+
+          if (lastText && !failed) {
+            if ($("auto").checked) {
+              translateText();
+            } else {
+              say("Bisaya transcription ready. Press Translate.");
+            }
+          } else if (!lastText && !failed) {
+            say("I did not catch any words. Try again and speak closer to the mic.", "warn");
+          }
+        });
+      };
+
+      cur = rec;
+      rec.start(1000);
+      btn.classList.add("on");
+      btn.textContent = "Stop";
+      say("Listening… speak Bisaya. Text and translation appear while you talk. The first one can take a while if the free service is waking up.");
+    }).catch(function () {
+      say("Microphone access is blocked. Allow it in your browser settings.", "err");
+    });
+  }
+
   $("mic").onclick = function () {
+    if (!langsReady()) {
+      say("Select your language in From and To first.", "warn");
+      return;
+    }
+
+    if (fromSel.value === "ceb") {
+      handleCebuanoMic();
+      return;
+    }
+
     var base = input.value.trim() ? input.value.trim() + " " : "";
-    var auto = fromSel.value === "auto", key = auto ? (toSel.value === "en" ? "fil" : "en") : fromSel.value, wasRec = !!cur;
 
     toggleRec(
       $("mic"),
-      key,
+      fromSel.value,
 
       function (t) {
         input.value = base + t;
@@ -906,10 +1327,6 @@
         }
       }
     );
-
-    if (auto && cur && !wasRec) {
-      say("Listening in " + LANGS[key].name + ". Voice cannot use Auto-detect, so pick the language you speak in “From” for best results.", "warn");
-    }
   };
 
   $("dlAudio").onclick = function () {
@@ -1129,10 +1546,22 @@
   }
 
   $("listenIn").onclick = function () {
-    speak(input.value.trim(), srcLang(input.value), $("listenIn"));
+    var k = srcLang(input.value);
+
+    if (!k) {
+      say("Select your language in From first.", "warn");
+      return;
+    }
+
+    speak(input.value.trim(), k, $("listenIn"));
   };
 
   $("listenOut").onclick = function () {
+    if (!toSel.value) {
+      say("Select your language in To first.", "warn");
+      return;
+    }
+
     speak(getOut(), toSel.value, $("listenOut"));
   };
 
@@ -1228,7 +1657,8 @@
 
     say("In the print window, choose “Save as PDF”.");
   }
-    $("download").onclick = function () {
+
+  $("download").onclick = function () {
     var o = getOut();
 
     if (!o) {
@@ -1305,8 +1735,9 @@
         ],
         [
           "Read aloud",
-          function () {
-            speak(it.out, it.to, b);
+          // FIX: use the clicked button (e.currentTarget) instead of the undefined variable "b"
+          function (e) {
+            speak(it.out, it.to, e.currentTarget);
           }
         ],
         [
@@ -1370,16 +1801,29 @@
 
   $("clear").onclick = function () {
     reqId++;
+    bisayaReqId++;
     clearTimeout(liveTimer);
     liveTimer = null;
+    clearTimeout(typeTimer);
     stopSpeaking();
+
+    if (bisayaAbort) {
+      try { bisayaAbort.abort(); } catch (e) {}
+      bisayaAbort = null;
+    }
+
+    if (cur && stopCurrent) stopCurrent();
+
     input.value = "";
     output.textContent = "";
-    $("translate").disabled = false;
+    busy = false; // FIX: otherwise the Translate button stays disabled if Clear is pressed mid-translation
+    syncControls();
     say("");
   };
 
   $("swap").onclick = function () {
+    if (!langsReady()) return;
+
     var f = fromSel.value === "auto" ? "en" : fromSel.value;
 
     fromSel.value = toSel.value;
@@ -1391,7 +1835,12 @@
       input.value = o;
       output.textContent = "";
     }
+
+    syncControls();
   };
+
+  syncControls();
+  say("Select the language you speak in From, and the language you want in To.");
 
   renderList();
 

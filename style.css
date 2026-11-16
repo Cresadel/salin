@@ -16,6 +16,7 @@ h1{font-size:1.45em;margin:0}header p{margin:0;color:var(--soft);font-size:.9em}
 .langs select{flex:1 1 160px;min-width:0}
 select{width:100%;padding:10px 12px;font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:10px}
 .swap{flex:0 0 auto;width:42px;height:42px;border-radius:50%;border:1px solid var(--line2);background:var(--card);color:var(--accent2);font-size:1.1em;cursor:pointer}
+.swap:disabled{opacity:.5;cursor:not-allowed}
 .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(340px,100%),1fr));gap:14px}
 :root.big .cols{grid-template-columns:1fr}
 :root.big .row .push{margin-left:0}
@@ -37,6 +38,7 @@ textarea,.output{width:100%;min-height:180px;padding:14px;font:inherit;line-heig
 .btn.sm{padding:4px 9px;font-size:.82em}
 .mic{display:inline-flex;align-items:center;gap:8px;padding:10px 16px;border-radius:999px;border:0;cursor:pointer;background:var(--accent);color:#fff;font:inherit;font-weight:600}
 .mic.on{background:var(--rec)}
+.mic:disabled{opacity:.5;cursor:not-allowed}
 .mic.on::before{content:"";width:9px;height:9px;border-radius:50%;background:#fff;animation:p 1s infinite}
 @keyframes p{50%{opacity:.2}}@media(prefers-reduced-motion:reduce){.mic.on::before{animation:none}}
 .opts{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-top:14px;font-size:.9em;color:var(--soft)}
